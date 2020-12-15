@@ -174,8 +174,8 @@ end
 function ctest_ii_query()
     enter_test_mode()
     get_uid()
-    test_cv_static()
-    test_trigger_static() -- UNUSED as hardware shorts test point to ground
+    --test_cv_static()
+    --test_trigger_static() -- UNUSED as hardware shorts test point to ground
 end
 
 
@@ -438,7 +438,76 @@ end
 
 
 function test_jacks_cv()
+    -- test trigger jacks with patch cable
+    set_dest "jack"
+    
+    -- calibrated for JF tester
+    local FOUR = 4.051
+    local TWOV = 2.037 -- use later for auto-calibration (directly via pogo)
+    local ZERO = 0.024
+    local NFOR = -4.0018
+    
+    crow.output[1].volts = FOUR
+    
+    local dests = { FOUR, ZERO, NFOR }
+    
+    local expects =
+        { { 18495, 10175,  1860 } -- RUN
+        , { 23055, 16303,  9552 } -- RAMP
+        , { 23299, 16491,  9687 } -- FM
+        , {  9493, 15729, 21970 } -- INTO -- nb range reversed
+        , {  4598, 22582, 32766 } -- TIME -- nb this is clipping, hence right at the limit
+        , { 23053, 16236,  9421 } -- CURVE
+        }
+    
+    crow.ii.jf.event = function( e, v )
+        if rxd ~= 0 then
+            screenstate[3] = v -- save current state
+            
+            local expect = expects[screenstate[1]][screenstate[2]]
+            local expect_min = expect - 1000
+            local expect_max = expect + 1000
 
+            if v > expect_min and v < expect_max then -- match
+                screenstate[2] = screenstate[2] + 1
+                if screenstate[2] >= 4 then -- this stage complete
+                    screenstate[2] = 1
+                    screenstate[1] = screenstate[1] + 1
+                    if screenstate[1] > 6 then
+                        guide_status = ""
+                        async_resume(0)
+                        return
+                    end
+                end
+            end
+            
+            crow.output[1].volts = dests[screenstate[2]]
+
+            rxd = 0
+            redraw()
+        end
+    end
+    
+    screenstate = {1,1,0} -- jack, expect, readout
+    
+    -- start streaming cv values from DUT
+    local query = clock.run(function()
+        while true do
+            rxd = 1
+            ctest_iiget( screenstate[1]+11 )
+            clock.sleep(0.02)
+        end
+    end)
+
+    set_screen "cvs"
+    
+    guide_status = "jacks_cvs"
+    redraw()
+    suspend_with_timeout(60)
+    
+    clock.cancel(query) -- stop streaming
+    
+    set_dest "none" -- deactivate output jack
 end
 
 
@@ -549,7 +618,7 @@ function test_jacks_outs()
     
     clock.cancel(query) -- stop streaming
     
-    set_dest "none" -- deactivate output jack
+    set_source "none" -- deactivate input jack
 end
 
 

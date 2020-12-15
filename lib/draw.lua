@@ -210,12 +210,13 @@ function draw_mod_cvs(bright,sel)
     screen.circle(107,17,5)
     screen.stroke()
     
+    -- draw selection
     if sel > 0 then
         screen.level(15)
         if sel < 4 then
             screen.circle(42 + sel*13,23 - sel*6,5)
         elseif sel < 6 then
-            screen.circle(26 + 42 + sel*13,23 - sel*6,5)
+            screen.circle(26 + 42 + (sel-3)*13,23 - (sel-3)*6,5)
         elseif sel == 6 then
             screen.circle(107,17,5)
         end
@@ -225,7 +226,7 @@ end
 
 
 function draw_cvs()
-    screen.move(0,24)
+    screen.move(0,16)
     screen.text "cvs"
     
     draw_mod_outs(1)
@@ -233,8 +234,29 @@ function draw_cvs()
     draw_mod_cvs(4,screenstate[1])
     draw_mod_outline()
     
+    screen.move(0,32)
+    screen.text(screenstate[1])
+    screen.move(16,32)
+    screen.text(screenstate[2])
     screen.move(0,40)
     screen.text(screenstate[3])
+
+    local volt = screenstate[3]/65535
+    volt = volt * 42 * 2
+    screen.level(1)
+
+    screen.move(1,44)
+    screen.line(1,50)
+    screen.stroke()
+
+    screen.move(43,44)
+    screen.line(43,50)
+    screen.stroke()
+    
+    screen.level(15)
+    screen.move(1+volt,44)
+    screen.line(1+volt,50)
+    screen.stroke()
 
     ok_disabled = true
     draw_add_okfail()
