@@ -1,11 +1,16 @@
 --- Just Friends Test
 
+include "lib/draw"
+include "lib/repl"
+include "lib/log"
+
 
 -- global constants
 --VERBOSE       = true -- prints every test report
 --FIRMWARE      = "~/dev/Just-Friends/JF_v4_0_0.bin" -- TODO use a combo flash
 FIRMWARE      = "~/dev/JFcombo.bin"
 FLASH_ADDRESS = 0x08000000
+
 
 --- list of DUT sources & the settings required for mux selection
 -- { test_amps, test_source }
@@ -73,6 +78,7 @@ function init()
     -- clk_id = clock.run(begin_test, true) -- forces re-uploading of the firmware
 end
 
+
 function ctest_reset()
     crow.output[1].volts = 0
     crow.output[1].slew = 0
@@ -94,6 +100,7 @@ function ctest_reset()
     log_clear()    
     set_screen('start')
 end
+
 
 function key(n,s)
     if guide_status ~= "" then
@@ -136,12 +143,16 @@ function begin_test( force_flash )
     
     -- FIXME ctest_suite( current_draw ) erroneously succeeding when no value is returned (due to no firmware)
     if ctest_suite( current_draw ) ~= 'fail' then -- FIXME change to ctest_critical()
-
+        print "current draw ok."
         ctest_suite( operating_points )
+        print "operating points done."
         --VERBOSE = true
         local flash_ok = 1
+        print("force flash = "..tostring(force_flash))
+        print("ctest has flash = "..tostring(ctest_has_flash()))
         if force_flash or not ctest_has_flash() then
-            _, _, flash_ok = ctest_flash( FIRMWARE, FLASH_ADDRESS )
+            print "start flash."
+            --_, _, flash_ok = ctest_flash( FIRMWARE, FLASH_ADDRESS )
         end
         if flash_ok == 1 then
             ctest_ii_query()
@@ -174,7 +185,7 @@ function ctest_guide()
     --test_pots()
     --test_switches()
     test_jacks_cv()
-    test_jacks_tr()
+    --test_jacks_tr()
     test_jacks_outs()
 end
 
@@ -183,7 +194,6 @@ function suspend_with_timeout(s)
     timeout = clock.run( function() clock.sleep(s); async_resume() end, s )
     clock.suspend()
 end
-
 
 
 function ctest_flash( bin, addr )
@@ -240,9 +250,11 @@ function ctest_iiset( n, ix )
     end
 end
 
+
 function ctest_iiget(n)
     crow.send( "ii.jf.get('test',"..n..")" )
 end
+
 
 function ctest_has_flash()
     clock.sleep(0.01)           -- ensure jf has booted
@@ -262,6 +274,7 @@ function enter_test_mode()
     ctest_iiset( "start" )
 end
 
+
 function get_uid()
     -- store UID for tracking serial numbers
     local uids = {}
@@ -274,6 +287,7 @@ function get_uid()
     end
     UID = string.format("0x%04x%04x%04x%04x%04x%04x",uids[1],uids[2],uids[3],uids[4],uids[5],uids[6])
 end
+
 
 function test_cv_static()
     -- test CV states
@@ -315,6 +329,7 @@ function test_trigger_static()
     set_dest "none"
 end
 
+
 -----------------------------------------------------
 --- guided hw tests
 
@@ -333,6 +348,7 @@ function test_lights()
     test_light_stage("lights_dim","dim",7,2)
     test_light_stage("lights_off","off",2,1)
 end
+
 
 function test_pots()
     local MUL   = (5/3)*math.pi
@@ -381,6 +397,7 @@ function test_pots()
     clock.cancel(query) -- stop streaming pot values
 end
 
+
 function test_switches()
   
     -- capture response
@@ -419,51 +436,48 @@ function test_switches()
     clock.cancel(query) -- stop streaming switch values
 end
 
+
 function test_jacks_cv()
 
 end
+
 
 function test_jacks_tr()
     -- test trigger jacks with patch cable
     set_dest "jack"
     
+    crow.output[1].volts = 0
+    
     crow.ii.jf.event = function( e, v )
         if rxd ~= 0 then
-            screenstate[rxd] = v -- save current state
-            if rxd == 1 then
-                screenstate[3][v+1] = 1 -- store value as activated
-            else
-                screenstate[4][v] = 1 -- touched
+            if v == 0 and screenstate[1] == 0 then -- check for zero
+                crow.output[1].volts = 5
+                screenstate[1] = 1
+            end
+            screenstate[2] = v -- save current state
+            if v == screenstate[1] then
+                screenstate[1] = screenstate[1] + 1
+            end
+            if screenstate[1] == 7 then
+                guide_status = ""
+                async_resume(0)
+                return
             end
             rxd = 0
             redraw()
         end
     end
     
-    --[[
-    -- Trigger LOW
-    crow.output[1].volts = 3
-    clock.sleep(60)
-    rxd = false
-    ctest_iiget( iiget.sTrigger )
-    suspend_with_timeout(0.1)
-    if rxd then check_expectation( 'Tr_L', 0, 0.1 )
-    else print "TODO handle tr_L over i2c not returning a value" end
-    
-    -- Trigger HIGH
-    crow.output[1].volts = 10
-    clock.sleep(0.1)
-    rxd = false
-    ctest_iiget( iiget.sTrigger )
-    suspend_with_timeout(0.1)
-    if rxd then check_expectation( 'Tr_H', 6, 0.1 )
-    else print "TODO handle tr_H over i2c not returning a value" end
-    
-    --clock.sleep(60)
-    
-    ]]
+    -- start streaming tr values from DUT
+    local query = clock.run(function()
+        while true do
+            rxd = 1
+            ctest_iiget( iiget.sTrigger )
+            clock.sleep(0.02)
+        end
+    end)
 
-    screenstate = {0} -- reset
+    screenstate = {0,0} -- start at left
     set_screen "trs"
     
     guide_status = "jacks_tr"
@@ -475,8 +489,67 @@ function test_jacks_tr()
     set_dest "none" -- deactivate output jack
 end
 
-function test_jacks_outs()
 
+
+function test_jacks_outs()
+    -- test output jacks with patch cable
+    set_source "jack"
+    crow.send( "ii.jf.test(19)" ) -- start chan 1 at 3rd setting (+ve test)
+    
+    --crow.send( "ii.jf.test(".. iiset.lights[cmd] ..")" ) -- cmd is 1..4 (0v, 0.7V, 5V, -2V)?
+    -- 1 == .041, .057, .013, .044, .033, .021  { .013 ..  .057}
+    -- 2 == .561, .574, .534, .569, .548, .537  { .534 ..  .574}
+    -- 3 == 8.36, 8.32, 8.35, 8.45, 8.26, 8.28  { 8.26 ..  8.36}
+    -- 4 == -1.62 -1.60 -1.65 -1.64 -1.61 -1.63 {-1.65 .. -1.60}
+    local expectations = { 4, 0, -4 } -- TODO accurate calibrate these vals
+    
+    -- test(17) == out[1] @-5v
+    
+    --crow.ii.jf.event = function( e, v )
+    crow.input[1].stream = function( v )
+        v = v-0.082 -- FIXME hacked offset bc no calibration on crow
+
+        screenstate[3] = v -- save current voltage
+        local expect = expectations[screenstate[2]]
+        local expect_min = expect - 0.15
+        local expect_max = expect + 0.15
+        if v > expect_min and v < expect_max then -- match value
+            screenstate[2] = screenstate[2] + 1
+            if screenstate[2] >= 4 then
+                screenstate[2] = 1
+                screenstate[1] = screenstate[1] + 1
+                if screenstate[1] >= 8 then
+                    guide_status = ""
+                    async_resume(0)
+                    return
+                end
+            end
+            -- count +ve first for a visual guide
+            local index = 17+(screenstate[1]*3)-screenstate[2]
+            crow.send( "ii.jf.test(".. index .. ")" ) -- update test setting
+        end
+        redraw()
+    end
+    
+    -- start streaming tr values from DUT
+    local query = clock.run(function()
+        while true do
+            --ctest_iiget( iiget.sTrigger )
+            crow.input[1].query()
+            clock.sleep(0.02)
+        end
+    end)
+
+    screenstate = {1,1,0} -- {output_ix, output_setting, value}
+    set_screen "outs"
+    
+    guide_status = "jacks_outs"
+    redraw()
+    suspend_with_timeout(60)
+    
+    clock.cancel(query) -- stop streaming
+    
+    set_dest "none" -- deactivate output jack
 end
 
 
@@ -579,44 +652,6 @@ function check_expectation( name, expectation, window )
 end
 
 
----------------------------------------------------------
---- logging
--- currently only supports strings, but could be extended to include readouts of expectation & returned vals
-
-function log_clear()
-    errors = {}
-end
-
-function log_error(s)
-    table.insert(errors, s)
-end
-
-function log_report()
-    local s = {}
-    local count = #errors
-    if count > 0 then
-        s[1] = count .. " TESTS FAILED!"
-        s[2] = "name   expect   got"
-        for k,v in ipairs(errors) do
-            s[k+2] = v[1] .. ":   " .. v[2] .. ",    " .. v[3]
-        end
-    else
-        s[1] = "ALL TESTS PASSED :)"
-    end
-    return s
-end
-
-function log_print()
-    local count = #errors
-    if count > 0 then
-       print(count .. " TESTS FAILED!")
-        for k,v in ipairs(errors) do
-            print(v[1] .. ":   " .. v[2] .. ",    " .. v[3])
-        end
-    else
-        print("ALL TESTS PASSED :)")
-    end
-end
 
 
 ---------------------------------------------------------
@@ -629,6 +664,7 @@ function redraw()
     screen.update()
 end
 
+
 function set_screen(page)
     local s = screens[page]
     if s then
@@ -637,247 +673,6 @@ function set_screen(page)
     else print "screen doesn't exist" end
 end
 
-function draw_start()
-    screen.move(0,40)
-    screen.text "just friends test"
-end
-
-function draw_flash()
-    screen.move(0,40)
-    screen.text "flash"
-end
-
-
-function draw_intensity()
-    screen.move(0,10)
-    screen.text "lights"
-    screen.move(16,32)
-    screen.font_size(16)
-    screen.level(screenstate[2])
-    screen.text(screenstate[1])
-    draw_add_okfail()
-end
-
-
-function draw_pots()
-    screen.move(0,10)
-    screen.text "pots"
-
-    ok_disabled = false
-    function pot(name,x_off,y_off,rotation,guide)
-        local in_range = false
-        screen.level(15)
-        if guide == "min" then
-            if rotation < 2.35 then in_range = true end
-            -- draw the guide marker
-            screen.level(15)
-            screen.move(19+x_off, 40+y_off)
-            screen.line(17+x_off, 42+y_off)
-            screen.stroke()
-        elseif guide == "12:00" then
-            if rotation > 4.35 and rotation < 4.9 then in_range = true end
-            -- draw the guide marker
-            screen.level(15)
-            screen.move(25+x_off, 18+y_off)
-            screen.line(25+x_off, 20+y_off)
-            screen.stroke()
-        elseif guide == "max" then
-            if rotation > 7.2 then in_range = true end
-            -- draw the guide marker
-            screen.level(15)
-            screen.move(31+x_off, 40+y_off)
-            screen.line(33+x_off, 42+y_off)
-            screen.stroke()
-        else print "unsupported guide"
-        end
-        -- dim the arc when it's in-range
-        screen.level(in_range and 2 or 8)
-        if not in_range then ok_disabled = true end -- disable the OK button if any pot is not in range
-        screen.move(25+x_off,30+y_off)
-        screen.arc(25+x_off,30+y_off,9,rotation,rotation-0.01)
-        screen.stroke()
-
-    end
-    pot("ramp", 0, 4, screenstate[1],screenstate[6])
-    pot("intone", 23, -18, screenstate[2],screenstate[6])
-    pot("fm", 46, 4, screenstate[3],screenstate[6])
-    pot("time", 69, -18, screenstate[4],screenstate[6])
-    pot("curve", 91, 4, screenstate[5],screenstate[6])
-    
-    screen.level(2)
-    screen.move(128, 60)
-    screen.text_right( "turn pots to " .. screenstate[6] )
-            
-    draw_add_okfail()
-end
-
-
-function draw_switches()
-    screen.move(0,10)
-    screen.text "switches"
-
-    local count = 0 -- how many switch positions have we confirmed?
-
-    -- draw speed
-    for i=1,2 do
-      if screenstate[3][i] == 1 then
-        count = count + 1
-        screen.level(2)
-        screen.rect( 74, -i*13 + 36, 12, 12)
-        screen.fill()
-      end
-      screen.level( (screenstate[1]+1 == i) and 15 or 4 )
-      screen.rect( 74, -i*13 + 36, 12, 12)
-      screen.stroke()
-    end
-
-    -- draw tsc
-    for i=1,3 do
-      if screenstate[4][i] == 1 then
-        count = count + 1
-        screen.level(2)
-        screen.rect( i*13 + 14, 30, 12, 12)
-        screen.fill()
-      end
-      screen.level( (screenstate[2] == i) and 15 or 4 )
-      screen.rect( i*13 + 14, 30, 12, 12)
-      screen.stroke()
-    end
-    
-    screen.level(2)
-    screen.move(128, 52)
-    screen.text_right( "move switches to all positions" )
-    
-    ok_disabled = (count ~= 5)
-    draw_add_okfail()
-end
-
-
-function draw_mod_outline()
-    screen.level(2)
-    screen.rect(48,-1,80,63)
-    screen.stroke()
-end
-
-function draw_mod_outs(bright)
-    screen.level(bright)
-    screen.move(59,54) -- avoids connecting line
-    -- main outs
-    for i=1,6 do
-        screen.circle(42 + i*13,54,5)
-        screen.stroke()
-    end
-    -- MIX
-    screen.circle(120,17,5)
-    screen.stroke()
-    -- leds
-    screen.level(1)
-    for i=1,6 do
-        screen.circle(42 + i*13,44,1)
-        screen.stroke()
-    end
-end
-
-function draw_mod_trs(bright,sel)
-    screen.move(59,30) -- avoids connecting line
-    for i=1,6 do
-        if i < sel then
-            screen.level(1)
-            screen.circle(42 + i*13,30,5)
-            screen.fill()
-        end
-        screen.level(bright)
-        screen.circle(42 + i*13,30,5)
-        screen.stroke()
-    end
-    -- draw selection
-    if sel > 0 then
-        screen.level(15)
-        screen.circle(42 + sel*13,30,6)
-        screen.stroke()
-    end
-end
-
-function draw_mod_cvs(bright)
-    screen.level(bright)
-    --screen.move(59,30) -- avoids connecting line
-    
-    -- run, ramp, fm
-    for i=1,3 do
-        screen.circle(42 + i*13,23 - i*6,5)
-        screen.stroke()
-    end
-    -- intone, time
-    for i=1,2 do
-        screen.circle(26 + 42 + i*13,23 - i*6,5)
-        screen.stroke()
-    end
-    -- curve
-    screen.circle(107,17,5)
-    screen.stroke()
-end
-
-
-function draw_cvs()
-    screen.move(0,40)
-    screen.text "cvs"
-end
-
-
-function draw_trs()
-    screen.move(0,10)
-    screen.text "triggers"
-    
-    draw_mod_outs(1)
-    draw_mod_trs(4,2)
-    draw_mod_cvs(1)
-    draw_mod_outline()
-end
-
-
-function draw_outs()
-    screen.move(0,40)
-    screen.text "outs"
-end
-
-
-function draw_report()
-    local r = log_report()
-    for k,v in ipairs(r) do
-        screen.level( k==1 and 15 or 7 )
-        screen.move( k==1 and 0 or 8, k*8 )
-        screen.text( v )
-    end
-end
-
-
-function draw_add_okfail()
-    screen.level(15)
-    screen.font_size(8)
-    screen.move(0,60)
-    screen.text "fail"
-    screen.level(ok_disabled and 2 or 15)
-    screen.move(28,60)
-    screen.text "ok"
-end
-
-
-
-
-------------------------------------------------------
---- repl helpers
-
-function pwr()
-    crow.send "test_power(1)"
-end
-
-function rst()
-    os.execute "st-flash reset"
-end
-
-function flash()
-    ctest_flash( FIRMWARE, FLASH_ADDRESS )
-end
 
 
 
