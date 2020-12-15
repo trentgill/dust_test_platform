@@ -2,7 +2,7 @@ repl = {}
 
 
 function pwr()
-    crow.send "test_power(1)"
+    ctest_power(true)
 end
 
 

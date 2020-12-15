@@ -41,6 +41,8 @@ TWOV = 2.037 -- use later for auto-calibration (directly via pogo)
 ZERO = 0.024
 NFOR = -4.0018
 
+POWER = true -- monitor whether +/-12V power is active
+
     
 
 ---------------------------
@@ -680,12 +682,14 @@ end
 --- high-level test wrappers
 
 function ctest_power(bool)
+    POWER = bool
     -- TODO causes system to reset when flipping state
     -- i am guessing it has to do with power draw causing a regulator to drop out or voltage to droop somewhere
     -- so waiting on a USB power meter to test.
     -- in the meantime, just let the power be always on as we know there's no power short on the test board.
     --crow.send("test_power("..(bool and 1 or 0)..")")
     --print("POWER "..tostring(bool))
+    redraw() -- ensure on-screen power indicator is up-to-date
 end
 
 
@@ -778,8 +782,14 @@ end
 
 function redraw()
     screen.clear()
+    
     screen.level(15)
     current_screen()
+    
+    screen.level(POWER and 15 or 0)
+    screen.rect(124,0,4,4)
+    screen.fill()
+    
     screen.update()
 end
 

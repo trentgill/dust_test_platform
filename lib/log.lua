@@ -15,9 +15,10 @@ function log_report()
     local count = #errors
     if count > 0 then
         s[1] = count .. " TESTS FAILED!"
-        s[2] = "name   expect   got"
+        --s[2] = "name   expect   got"
         for k,v in ipairs(errors) do
-            s[k+2] = v[1] .. ":   " .. v[2] .. ",    " .. v[3]
+            s[k+1] = v[1] .. ":   " .. v[2] .. ",    " .. v[3]
+            --s[k+2] = v[1] .. ":   " .. v[2] .. ",    " .. v[3]
         end
     else
         s[1] = "ALL TESTS PASSED :)"
