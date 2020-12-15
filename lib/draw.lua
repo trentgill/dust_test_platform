@@ -296,6 +296,34 @@ function draw_outs()
     draw_add_okfail()
 end
 
+function draw_progress(amount)
+    screen.level(1)
+
+    screen.move(8,26)
+    screen.line(8,38)
+    screen.stroke()
+
+    screen.move(120,26)
+    screen.line(120,38)
+    screen.stroke()
+    
+    amount = amount * 112
+
+    screen.level(15)
+    screen.move(8+amount,26)
+    screen.line(8+amount,38)
+    screen.stroke()
+end
+
+function draw_calibrate()
+    screen.move(0,8)
+    screen.text "calibrating..."
+
+    draw_progress(screenstate[1])
+
+    ok_disbled = true
+end
+
 
 function draw_report()
     local r = log_report()

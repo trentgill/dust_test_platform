@@ -35,6 +35,13 @@ ctest_dests =
     , none    = 0
     }
     
+-- calibrated for JF tester
+FOUR = 4.051
+TWOV = 2.037 -- use later for auto-calibration (directly via pogo)
+ZERO = 0.024
+NFOR = -4.0018
+
+    
 
 ---------------------------
 -- private global vars
@@ -58,6 +65,7 @@ function globals()
         , cvs       = draw_cvs
         , trs       = draw_trs
         , outs      = draw_outs
+        , calibrate = draw_calibrate
         , report    = draw_report
         }
     current_screen = screens.start
@@ -146,7 +154,7 @@ function begin_test( force_flash )
         print "current draw ok."
         ctest_suite( operating_points )
         print "operating points done."
-        --VERBOSE = true
+        
         local flash_ok = 1
         print("force flash = "..tostring(force_flash))
         print("ctest has flash = "..tostring(ctest_has_flash()))
@@ -155,8 +163,12 @@ function begin_test( force_flash )
             --_, _, flash_ok = ctest_flash( FIRMWARE, FLASH_ADDRESS )
         end
         if flash_ok == 1 then
+            VERBOSE = true
             ctest_ii_query()
+            VERBOSE = false
             ctest_guide()
+            ctest_calibrate()
+            ctest_iiset "reset"
         else
             print "FLASH failed. FIXME retry?"
         end
@@ -174,19 +186,19 @@ end
 function ctest_ii_query()
     enter_test_mode()
     get_uid()
-    --test_cv_static()
+    test_cv_static()
     --test_trigger_static() -- UNUSED as hardware shorts test point to ground
 end
 
 
 function ctest_guide()
     -- GUIDE
-    --test_lights()
-    --test_pots()
-    --test_switches()
+    test_lights()
+    test_pots()
+    test_switches()
     test_jacks_cv()
-    --test_jacks_tr()
-    --test_jacks_outs()
+    test_jacks_tr()
+    test_jacks_outs()
 end
 
 
@@ -232,12 +244,12 @@ iiget =
     }
 
 ii_cv_tests =
-    { { "cRun"   , 32767, 2500 } -- FIXME broken due to jack-detection
-    , { "cRamp"  , 32767, 500 }
-    , { "cFM"    , 32767, 500 }
-    , { "cIntone", 32767, 2500 }
-    , { "cTime"  , 42697, 5000 } -- 65535 * 0.651515
-    , { "cCurve" , 32767, 500 }
+    { { "cRun"   , 10177, 500 } -- FIXME broken due to jack-detection
+    , { "cRamp"  , 16383, 500 }
+    , { "cFM"    , 16383, 500 }
+    , { "cIntone", 16383, 1000 }
+    , { "cTime"  , 21348, 2000 } -- 32767 * 0.651515
+    , { "cCurve" , 16383, 500 }
     }
 
     
@@ -291,6 +303,7 @@ end
 
 function test_cv_static()
     -- test CV states
+    ctest_iiset "zerovolts" -- ensure v8 values are read into the right variable
     clock.sleep(0.01) -- wait for voltages to settle
     for k,v in ipairs(ii_cv_tests) do
         rxd = false
@@ -440,12 +453,6 @@ end
 function test_jacks_cv()
     -- test trigger jacks with patch cable
     set_dest "jack"
-    
-    -- calibrated for JF tester
-    local FOUR = 4.051
-    local TWOV = 2.037 -- use later for auto-calibration (directly via pogo)
-    local ZERO = 0.024
-    local NFOR = -4.0018
     
     crow.output[1].volts = FOUR
     
@@ -621,7 +628,50 @@ function test_jacks_outs()
     set_source "none" -- deactivate input jack
 end
 
+function ctest_calibrate()
+    screenstate = {0,0} -- second val is whether we've updated to 2V level
+    set_screen "calibrate"
+    
+    ctest_iiset "zerovolts"
+    crow.output[1].volts = ZERO
 
+    set_dest "v8"
+    
+    local prog = clock.run(function()
+        while true do
+            screenstate[1] = screenstate[1] + (0.02 / 3.0) -- 1.0 = 2seconds
+            if screenstate[1] > 0.45 then -- past half way
+                if screenstate[2] == 0 then
+                    ctest_iiset "twovolts" -- change the expectation (but don't update voltage)
+                    screenstate[2] = 1
+                elseif screenstate[2] == 1 then -- past half way + one loop time
+                    crow.output[1].volts = TWOV
+                    screenstate[2] = 2
+                elseif screenstate[2] == 2 and screenstate[1] > 0.9 then
+                    ctest_iiset "save"
+                    screenstate[2] = 3
+                elseif screenstate[1] > 1.0 then
+                    ctest_iiset "zerovolts"
+                    crow.output[1].volts = ZERO
+                    
+                    guide_status = ""
+                    async_resume(0)
+                    return
+                end
+            end
+            redraw()
+            clock.sleep(0.02)
+        end
+    end)
+    
+    guide_status = "calibration"
+    redraw()
+    suspend_with_timeout(60)
+    
+    clock.cancel(prog)
+    
+    set_dest "none"
+end
 
 
 
