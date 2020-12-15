@@ -179,29 +179,65 @@ function draw_mod_trs(bright,sel)
     end
 end
 
-function draw_mod_cvs(bright)
-    screen.level(bright)
+function draw_mod_cvs(bright,sel)
+    sel = sel or 0
     --screen.move(59,30) -- avoids connecting line
     
     -- run, ramp, fm
     for i=1,3 do
+        if i < sel then
+            screen.level(1)
+            screen.circle(42 + i*13,23 - i*6,5)
+            screen.fill()
+        end
+        screen.level(bright)
         screen.circle(42 + i*13,23 - i*6,5)
         screen.stroke()
     end
     -- intone, time
     for i=1,2 do
+        if (i+3) < sel then
+            screen.level(1)
+            screen.circle(26 + 42 + i*13,23 - i*6,5)
+            screen.fill()
+        end
+        screen.level(bright)
         screen.circle(26 + 42 + i*13,23 - i*6,5)
         screen.stroke()
     end
     -- curve
+    screen.level(bright)
     screen.circle(107,17,5)
     screen.stroke()
+    
+    if sel > 0 then
+        screen.level(15)
+        if sel < 4 then
+            screen.circle(42 + sel*13,23 - sel*6,5)
+        elseif sel < 6 then
+            screen.circle(26 + 42 + sel*13,23 - sel*6,5)
+        elseif sel == 6 then
+            screen.circle(107,17,5)
+        end
+        screen.stroke()
+    end
 end
 
 
 function draw_cvs()
-    screen.move(0,40)
+    screen.move(0,24)
     screen.text "cvs"
+    
+    draw_mod_outs(1)
+    draw_mod_trs(1)
+    draw_mod_cvs(4,screenstate[1])
+    draw_mod_outline()
+    
+    screen.move(0,40)
+    screen.text(screenstate[3])
+
+    ok_disabled = true
+    draw_add_okfail()
 end
 
 

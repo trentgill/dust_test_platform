@@ -186,7 +186,7 @@ function ctest_guide()
     --test_switches()
     test_jacks_cv()
     --test_jacks_tr()
-    test_jacks_outs()
+    --test_jacks_outs()
 end
 
 
