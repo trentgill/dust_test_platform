@@ -56,6 +56,8 @@ function globals()
     window = 0
     UID = {}
     timeout = {} -- clock routine for timeout
+    query = {} -- clock routine for rapid updates
+    prog = {} -- clock routine for counting time
     ok_disabled = false
     
     screens =
@@ -84,12 +86,20 @@ end
 function init()
     ctest_reset() -- reset crow environment. TODO more extreme?
     
-    clk_id = clock.run(begin_test) -- TODO this should be managed by the norns UI
+    --clk_id = clock.run(begin_test) -- TODO this should be managed by the norns UI
     -- clk_id = clock.run(begin_test, true) -- forces re-uploading of the firmware
 end
 
 
 function ctest_reset()
+    if type(timeout) == 'thread' then clock.cancel(timeout) end
+    if type(query) == 'thread' then clock.cancel(query) end
+    if type(prog) == 'thread' then clock.cancel(prog) end
+
+    globals()
+    ctest_power(false)
+    OSEXECret = 666 -- flash hasn't finished
+    
     crow.output[1].volts = 0
     crow.output[1].slew = 0
     
@@ -108,7 +118,7 @@ function ctest_reset()
     crow.ii.jf.event = function( e, v ) async_resume(v) end
 
     log_clear()    
-    set_screen('start')
+    set_screen "start"
 end
 
 
@@ -123,6 +133,21 @@ function key(n,s)
             async_resume(0)
         end
     end
+    if current_screen == screens.report then
+        if n == 2 and s == 0 then -- on release to avoid double-trigger
+            ctest_reset()
+        end
+    end
+    if current_screen == screens.start then
+        if n == 2 and s == 1 then
+            clk_id = clock.run(begin_test)
+        elseif n==3 and s==1 then
+            clk_id = clock.run(begin_test, true)
+        end
+    end
+    if n == 1 and s == 1 then
+        ctest_reset()
+    end
 end
 
 
@@ -133,8 +158,8 @@ end
 
 -- 'critical' will be run individually & will power-down immediately if any test fails
 current_draw =
-    { { "+12A", 1.21, 0.2 }
-    , { "-12A", 0.78, 0.2 }
+    { { "+12A", 0.9, 0.55 } -- wide range to cover lower current un-flashed stage (ie codec off)
+    , { "-12A", 0.78, 0.3 }
     }
 
 operating_points =                     -- VMeter
@@ -149,39 +174,56 @@ operating_points =                     -- VMeter
 
 
 function begin_test( force_flash )
-    --ctest_power(true)
+    ctest_power(true)
+    clock.sleep(0.05)
     
     -- FIXME ctest_suite( current_draw ) erroneously succeeding when no value is returned (due to no firmware)
     if ctest_suite( current_draw ) ~= 'fail' then -- FIXME change to ctest_critical()
+        clock.sleep(0.1)
         print "current draw ok."
         ctest_suite( operating_points )
         print "operating points done."
         
-        local flash_ok = 1
-        print("force flash = "..tostring(force_flash))
+        OSEXECret = 666
+        --print("force flash = "..tostring(force_flash))
         print("ctest has flash = "..tostring(ctest_has_flash()))
         if force_flash or not ctest_has_flash() then
             print "start flash."
-            --_, _, flash_ok = ctest_flash( FIRMWARE, FLASH_ADDRESS )
+            screenstate = {0}
+            set_screen "flash"
+            redraw()
+            
+            OSEXECret = ctest_flash( FIRMWARE, FLASH_ADDRESS ) -- ret: true, exit, 0
+
+            print "flash completed"
+            clock.sleep(0.1) -- wait for reset
+            print("FLASH state = "..tostring(OSEXECret))
+        else
+            OSEXECret = true
         end
-        if flash_ok == 1 then
-            VERBOSE = true
+        if OSEXECret == true then
+            clock.sleep(0.3)
+            --VERBOSE = true
             ctest_ii_query()
-            VERBOSE = false
+            --VERBOSE = false
             ctest_guide()
             ctest_calibrate()
             ctest_iiset "reset"
         else
             print "FLASH failed. FIXME retry?"
+            --log_error{ "BAD FLASH", expectation, rxd }
+            log_error{"FLASH FAILED",0,0}
         end
     --[[
     ]]
     end
     
-    --ctest_power(false)
+    clock.sleep(0.1)
+    ctest_power(false)
     
     log_print()
     set_screen "report"
+    guide_status = ""
 end
 
 
@@ -223,6 +265,7 @@ iiset =
     , lights    = {3,4,5}
     , zerovolts = 10
     , twovolts  = 12
+    , globalout = 16
     }
 
 -- ii.jf.get('test',n) where n is:
@@ -274,7 +317,7 @@ function ctest_has_flash()
     clock.sleep(0.01)           -- ensure jf has booted
     rxd = false                 -- mark for timeout
     ctest_iiget( iiget.uid[1] ) -- attempt to read the UID
-    suspend_with_timeout(0.1)
+    suspend_with_timeout(0.5)
     if rxd then return true
     else return false end
 end
@@ -292,14 +335,21 @@ end
 function get_uid()
     -- store UID for tracking serial numbers
     local uids = {}
+    local success = true
     for i=1,6 do
         rxd = false
         ctest_iiget( iiget.uid[i] )
         suspend_with_timeout(0.1)
         if rxd then uids[i] = rxd -- save value
-        else print "TODO handle UID not returning a value" end
+        else
+            print "TODO handle UID not returning a value"
+            success = false
+        end
     end
-    UID = string.format("0x%04x%04x%04x%04x%04x%04x",uids[1],uids[2],uids[3],uids[4],uids[5],uids[6])
+    if success then
+        UID = string.format("0x%04x%04x%04x%04x%04x%04x",uids[1],uids[2],uids[3],uids[4],uids[5],uids[6])
+    end
+    return success
 end
 
 
@@ -349,14 +399,16 @@ end
 --- guided hw tests
 
 function test_lights()
+    screenstate = {0,0}
     set_screen "intensity"
     
+    ctest_iiset "globalout"
     local function test_light_stage(stat,name,level,cmd)
         guide_status = stat
         screenstate = { name, level }
         crow.send( "ii.jf.test(".. iiset.lights[cmd] ..")" )
         redraw()
-        suspend_with_timeout(10)
+        suspend_with_timeout(20)
     end
     
     test_light_stage("lights_bright","bright",15,3)
@@ -378,7 +430,7 @@ function test_pots()
     end
     
     -- start streaming pot values from DUT
-    local query = clock.run(function()
+    query = clock.run(function()
         local chan = 7
         while true do
             chan = chan + 1
@@ -430,7 +482,7 @@ function test_switches()
     end
     
     -- start streaming switch values from DUT
-    local query = clock.run(function()
+    query = clock.run(function()
         local chan = 'speed'
         while true do
             if chan == 'speed' then chan = 'tsc' else chan = 'speed' end -- flip state
@@ -482,6 +534,11 @@ function test_jacks_cv()
                 if screenstate[2] >= 4 then -- this stage complete
                     screenstate[2] = 1
                     screenstate[1] = screenstate[1] + 1
+                    if screenstate[1] <= 3 then
+                        single_bright_light(screenstate[1])
+                    else
+                        single_bright_light(screenstate[1]-1)
+                    end
                     if screenstate[1] > 6 then
                         guide_status = ""
                         async_resume(0)
@@ -498,9 +555,10 @@ function test_jacks_cv()
     end
     
     screenstate = {1,1,0} -- jack, expect, readout
+    single_bright_light(1)
     
     -- start streaming cv values from DUT
-    local query = clock.run(function()
+    query = clock.run(function()
         while true do
             rxd = 1
             ctest_iiget( screenstate[1]+11 )
@@ -514,6 +572,7 @@ function test_jacks_cv()
     redraw()
     suspend_with_timeout(60)
     
+    single_bright_light(0)
     clock.cancel(query) -- stop streaming
     
     set_dest "none" -- deactivate output jack
@@ -531,10 +590,12 @@ function test_jacks_tr()
             if v == 0 and screenstate[1] == 0 then -- check for zero
                 crow.output[1].volts = 5
                 screenstate[1] = 1
+                single_bright_light(1)
             end
             screenstate[2] = v -- save current state
             if v == screenstate[1] then
                 screenstate[1] = screenstate[1] + 1
+                single_bright_light(screenstate[1])
             end
             if screenstate[1] == 7 then
                 guide_status = ""
@@ -547,7 +608,7 @@ function test_jacks_tr()
     end
     
     -- start streaming tr values from DUT
-    local query = clock.run(function()
+    query = clock.run(function()
         while true do
             rxd = 1
             ctest_iiget( iiget.sTrigger )
@@ -561,6 +622,7 @@ function test_jacks_tr()
     guide_status = "jacks_tr"
     redraw()
     suspend_with_timeout(60)
+    single_bright_light(0)
     
     clock.cancel(query) -- stop streaming
     
@@ -610,7 +672,7 @@ function test_jacks_outs()
     end
     
     -- start streaming tr values from DUT
-    local query = clock.run(function()
+    query = clock.run(function()
         while true do
             --ctest_iiget( iiget.sTrigger )
             crow.input[1].query()
@@ -630,6 +692,12 @@ function test_jacks_outs()
     set_source "none" -- deactivate input jack
 end
 
+function single_bright_light(ix) -- 0 is off
+    local set = 16
+    if ix > 0 then set = 16 + ix*3 end
+    --crow.send( "ii.jf.test(".. set .. ")" )
+end
+
 function ctest_calibrate()
     screenstate = {0,0} -- second val is whether we've updated to 2V level
     set_screen "calibrate"
@@ -639,7 +707,7 @@ function ctest_calibrate()
 
     set_dest "v8"
     
-    local prog = clock.run(function()
+    prog = clock.run(function()
         while true do
             screenstate[1] = screenstate[1] + (0.02 / 3.0) -- 1.0 = 2seconds
             if screenstate[1] > 0.45 then -- past half way
@@ -687,16 +755,19 @@ function ctest_power(bool)
     -- i am guessing it has to do with power draw causing a regulator to drop out or voltage to droop somewhere
     -- so waiting on a USB power meter to test.
     -- in the meantime, just let the power be always on as we know there's no power short on the test board.
-    --crow.send("test_power("..(bool and 1 or 0)..")")
+    crow.send("test_power("..(bool and 1 or 0)..")")
     --print("POWER "..tostring(bool))
     redraw() -- ensure on-screen power indicator is up-to-date
 end
 
 
 function ctest_suite( cases )
+    local errstate = {}
     for k,v in ipairs( cases ) do
-        run_cv_test( v )
+        local e = run_cv_test( v )
+        if e and not errstate then errstate = e end
     end
+    return errstate
 end
 
 

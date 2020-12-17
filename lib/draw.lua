@@ -1,16 +1,25 @@
 
 function draw_start()
-    screen.move(0,40)
+    screen.level(15)
+    screen.move(0,8)
     screen.text "just friends test"
+
+    screen.level(15)
+    screen.move(0,60)
+    screen.text "start"
 end
 
 function draw_flash()
-    screen.move(0,40)
-    screen.text "flash"
+    screen.move(0,8)
+    screen.text "writing firmware..."
+
+    screen.move(8,32)
+    screen.text "wait 10seconds."
 end
 
 
 function draw_intensity()
+    ok_disabled = false
     screen.move(0,10)
     screen.text "lights"
     screen.move(16,32)
@@ -328,10 +337,15 @@ end
 function draw_report()
     local r = log_report()
     for k,v in ipairs(r) do
-        screen.level( k==1 and 15 or 7 )
-        screen.move( k==1 and 0 or 8, k*8 )
-        screen.text( v )
+        if k < 7 then
+            screen.level( k==1 and 15 or 7 )
+            screen.move( k==1 and 0 or 8, k*8 )
+            screen.text( v )
+        end
     end
+    screen.level(15)
+    screen.move(0,60)
+    screen.text "ok"
 end
 
 
