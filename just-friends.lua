@@ -154,17 +154,19 @@ end
 -----------------------------------------------------------------------------
 --- test cases { ctest_sources, expectation, window }
 
--- FIXME need to fine-tune these values after calibrating the testplatform
-
 -- 'critical' will be run individually & will power-down immediately if any test fails
+-- FIXME these values are post-flash when the codec is running
+-- perhaps run 2 separate current_draw tests, one for 'detect short' at the beginning
+-- then a second after flashing. in reality, the current draw error is probably detectable by +/-12 voltage
+-- so current_draw can just be loose.
 current_draw =
-    { { "+12A", 0.9, 0.55 } -- wide range to cover lower current un-flashed stage (ie codec off)
-    , { "-12A", 0.78, 0.3 }
+    { { "+12A", 1.05, 0.15 }
+    , { "-12A", 0.98, 0.12 }
     }
 
 operating_points =                     -- VMeter
-    { { "+12V"    ,  3.75, 0.3 } --  11.59 => 3v77 (/3)
-    , { "-12V"    , -3.59, 0.3 } -- -11.86 => -3v6 (/3)
+    { { "+12V"    ,  3.77, 0.07 } --  11.59 => 3v77 (/3)
+    , { "-12V"    , -3.58, 0.05 } -- -11.86 => -3v6 (/3)
     , { "+3V3"    ,  3.27, 0.2 } --
     , { "+3V1"    ,  3.10, 0.2 } --  3.10
     , { "vref_in" , -1.39, 0.2 } -- -1.50
@@ -178,11 +180,14 @@ function begin_test( force_flash )
     clock.sleep(0.05)
     
     -- FIXME ctest_suite( current_draw ) erroneously succeeding when no value is returned (due to no firmware)
+    VERBOSE = true
     if ctest_suite( current_draw ) ~= 'fail' then -- FIXME change to ctest_critical()
         clock.sleep(0.1)
         print "current draw ok."
         ctest_suite( operating_points )
+        VERBOSE = false
         print "operating points done."
+        log_print()
         
         OSEXECret = 666
         --print("force flash = "..tostring(force_flash))
@@ -203,9 +208,7 @@ function begin_test( force_flash )
         end
         if OSEXECret == true then
             clock.sleep(0.3)
-            --VERBOSE = true
             ctest_ii_query()
-            --VERBOSE = false
             ctest_guide()
             ctest_calibrate()
             ctest_iiset "reset"
@@ -214,9 +217,8 @@ function begin_test( force_flash )
             --log_error{ "BAD FLASH", expectation, rxd }
             log_error{"FLASH FAILED",0,0}
         end
-    --[[
-    ]]
     end
+    VERBOSE = false
     
     clock.sleep(0.1)
     ctest_power(false)
